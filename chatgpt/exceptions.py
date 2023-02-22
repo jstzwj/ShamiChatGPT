@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #coding:utf-8
 
-class ChatGPTError(Exception):
+class ChatGPTServiceError(Exception):
     pass
 
 
@@ -9,11 +9,17 @@ class InternalError(Exception):
     pass
 
 
-class ParamsError(ChatGPTError):
+class ParamsError(ChatGPTServiceError):
     pass
 
 
-class ServerOverloadError(ChatGPTError):
+class ServerOverloadError(ChatGPTServiceError):
+    pass
+
+class UnsupportedCountryError(ChatGPTServiceError):
+    pass
+
+class AccessDeniedError(ChatGPTServiceError):
     pass
 
 

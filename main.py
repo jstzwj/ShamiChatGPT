@@ -7,6 +7,7 @@ async def main():
         account_info = json.loads(f.read())
     session = ChatSession(account_info["account"], account_info["password"])
     await session.start_session()
+    await asyncio.sleep(3)
     await session.conversation_select(1)
     await asyncio.sleep(5)
     await session.conversation_select(2)
