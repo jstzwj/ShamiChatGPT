@@ -22,6 +22,9 @@ class UnsupportedCountryError(ChatGPTServiceError):
 class AccessDeniedError(ChatGPTServiceError):
     pass
 
+class UndefinedError(ChatGPTServiceError):
+    pass
+
 
 class MissDataError(InternalError):
     pass

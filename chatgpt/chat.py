@@ -7,7 +7,23 @@ from playwright._impl._api_types import TimeoutError
 from playwright.async_api import async_playwright
 from playwright.async_api import Playwright
 
-from chatgpt.exceptions import AccessDeniedError, ServerOverloadError, UnsupportedCountryError
+from chatgpt.exceptions import AccessDeniedError, ServerOverloadError, UndefinedError, UnsupportedCountryError
+
+
+class ChatRecorder(object):
+    def __init__(self) -> None:
+        self.conversations = None
+        self.history = None
+
+    async def response_recorder(self, response):
+        if response.url.startswith("https://chat.openai.com/backend-api/conversation/"):
+            response_obj = json.loads(await response.text())
+            # print(response_obj)
+            self.history = response_obj
+        elif response.url.startswith("https://chat.openai.com/backend-api/conversations"):
+            response_obj = json.loads(await response.text())
+            # print(response_obj)
+            self.conversations = response_obj
 
 class ChatSession(object):
     def __init__(self, account: str, password: str, headless: bool=False) -> None:
@@ -20,6 +36,7 @@ class ChatSession(object):
         self.browser = None
         self.context = None
         self.page = None
+        self.recorder = ChatRecorder()
     
     async def start_session(self):
         self.pw_manager = async_playwright()
@@ -28,6 +45,9 @@ class ChatSession(object):
         self.browser = await self.pw.chromium.launch(headless=self.headless, devtools=False)
         self.context = await self.browser.new_context()
         await self.context.add_init_script("Object.defineProperties(navigator, {webdriver:{get:()=>false}});")
+
+        self.page = await self.context.new_page()
+        self.page.on("response", self.recorder.response_recorder)
         
         try:
             await self.login()
@@ -45,7 +65,6 @@ class ChatSession(object):
         self.pw_manager = None
 
     async def login(self):
-        self.page = await self.context.new_page()
         await self.page.goto("https://chat.openai.com/auth/login")
         await self.page.wait_for_load_state("domcontentloaded")
 
@@ -57,6 +76,8 @@ class ChatSession(object):
                 raise ServerOverloadError("ChatGPT is at capacity right now")
             elif self.check_ui("xpath=//h1[text()='Access denied']"):
                 raise AccessDeniedError("Access denied")
+            elif self.check_ui("xpath=//h1[text()='undefined']"):
+                raise UndefinedError("Undefined")
             else:
                 raise e
         
@@ -85,8 +106,8 @@ class ChatSession(object):
             await self.page.locator(f"xpath=//button[text()='{name}']").click()
 
     async def click_ui(self, xpath: str):
-        await self.page.wait_for_selector(selector=f"xpath={xpath}")
-        await self.page.locator(selector=f"xpath={xpath}").click()
+        await self.page.wait_for_selector(selector=xpath)
+        await self.page.locator(selector=xpath).click()
     
     async def check_ui(self, xpath: str):
         return await self.page.locator(selector=f"xpath=//div[text()='{xpath}']").count() > 0
@@ -94,14 +115,31 @@ class ChatSession(object):
     async def new_chat(self):
         await self.click_ui("xpath=//a[text()='New chat']")
     
-    async def conversation_select(self, index: int):
+    async def select_conversation(self, index: int):
         await self.click_ui(f'xpath=//nav/div[1]/div/a[{index}]')
     
-    async def conversation_info(self):
-        conversation_info = []
-        all_conversation = await self.page.locator(f'xpath=//nav/div[1]/div/a').all()
-        for chat_conversation in all_conversation:
-            text = chat_conversation.locator("xpath=div[1]").text_content()
-            conversation_info.append(text)
+    async def get_conversations(self):
+        await self.new_chat()
+        while True:
+            if self.recorder.conversations is not None:
+                break
+            await asyncio.sleep(0.1)
+        conversations = self.recorder.conversations
+        self.recorder.conversations = None
+        return conversations
+    
+    async def get_conversation(self, conversation_index: int):
+        await self.select_conversation(conversation_index)
+        while True:
+            if self.recorder.history is not None:
+                break
+            await asyncio.sleep(0.1)
+        history = self.recorder.history
+        self.recorder.history = None
+        return history
         
-        return conversation_info
+    async def submit_question(self, conversation_index: int, text: str):
+        await self.select_conversation(conversation_index)
+        await self.page.wait_for_selector(selector="xpath=//textarea")
+        await self.page.locator(selector="xpath=//textarea").type(text, delay=100)
+        await self.page.locator(selector="xpath=//textarea").press("Enter")
