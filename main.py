@@ -5,7 +5,7 @@ from chatgpt.chat import ChatSession
 async def main():
     with open("account.json", "r", encoding="utf-8") as f:
         account_info = json.loads(f.read())
-    session = ChatSession(account_info["account"], account_info["password"])
+    session = ChatSession(account_info["account"], account_info["password"], headless=False)
     await session.start_session()
     info = await session.get_conversations()
     print(info)

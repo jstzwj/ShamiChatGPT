@@ -3,13 +3,14 @@ import json
 import json
 import string
 import asyncio
+from typing import Optional, Union
 from playwright._impl._api_types import TimeoutError
 from playwright.async_api import async_playwright
 from playwright.async_api import Playwright
 
+from chatgpt.conversation import Conversation
 from chatgpt.exceptions import AccessDeniedError, ServerOverloadError, UndefinedError, UnsupportedCountryError
-
-
+from chatgpt.consts import *
 class ChatRecorder(object):
     def __init__(self) -> None:
         self.conversations = None
@@ -94,7 +95,7 @@ class ChatSession(object):
         try:
             await self.page.wait_for_url("https://chat.openai.com/chat")
         except TimeoutError as e:
-            await self.page.wait_for_selector(selector="xpath=//div[contains(text(), '(error=unsupported_country)']")
+            await self.page.wait_for_selector(selector="xpath=//div[contains(text(), 'unsupported_country')]")
             raise UnsupportedCountryError("ChatGPT is not available in your country")
 
         await self.skip_button("Next")
@@ -115,8 +116,11 @@ class ChatSession(object):
     async def new_chat(self):
         await self.click_ui("xpath=//a[text()='New chat']")
     
-    async def select_conversation(self, index: int):
-        await self.click_ui(f'xpath=//nav/div[1]/div/a[{index}]')
+    async def select_conversation(self, index: Union[str, int]):
+        if isinstance(index, str):
+            await self.page.goto(f"https://chat.openai.com/chat/{index}")
+        else:
+            await self.click_ui(f'xpath=//nav/div[1]/div/a[{index}]')
     
     async def get_conversations(self):
         await self.new_chat()
@@ -126,10 +130,15 @@ class ChatSession(object):
             await asyncio.sleep(0.1)
         conversations = self.recorder.conversations
         self.recorder.conversations = None
-        return conversations
+
+        ret = []
+        for item in conversations["items"]:
+            ret.append(Conversation(self, item["id"], item["title"], item["create_time"]))
+        return ret
     
-    async def get_conversation(self, conversation_index: int):
-        await self.select_conversation(conversation_index)
+    async def get_conversation(self, conversation_index: Optional[Union[str, int]]=None):
+        if conversation_index is not None:
+            await self.select_conversation(conversation_index)
         while True:
             if self.recorder.history is not None:
                 break
@@ -137,9 +146,24 @@ class ChatSession(object):
         history = self.recorder.history
         self.recorder.history = None
         return history
+    
+    async def delete_conversation(self, conversation_index: Optional[Union[str, int]]=None):
+        if conversation_index is not None:
+            await self.select_conversation(conversation_index)
+        await self.click_ui("xpath=//nav/div[1]/div/a/div[2]/button[2]")
+        await asyncio.sleep(1)
+        await self.click_ui("xpath=//nav/div[1]/div/a/div[2]/button[1]")
+        await asyncio.sleep(1)
+    
+    async def wait_until_response(self):
+        while True:
+            if not await self.check_ui("xpath=//div[@class='text-2xl']"):
+                break
+            await asyncio.sleep(1)
         
-    async def submit_question(self, conversation_index: int, text: str):
-        await self.select_conversation(conversation_index)
+    async def submit_question(self, text: str, conversation_index: Optional[str]=None):
+        if conversation_index is not None:
+            await self.select_conversation(conversation_index)
         await self.page.wait_for_selector(selector="xpath=//textarea")
         await self.page.locator(selector="xpath=//textarea").type(text, delay=100)
         await self.page.locator(selector="xpath=//textarea").press("Enter")
