@@ -1,6 +1,6 @@
 
 import json
-import json
+import re
 import string
 import asyncio
 from typing import Optional, Union
@@ -8,23 +8,19 @@ from playwright._impl._api_types import TimeoutError
 from playwright.async_api import async_playwright
 from playwright.async_api import Playwright
 
-from chatgpt.conversation import Conversation
+from chatgpt.conversation import Conversation, History
 from chatgpt.exceptions import AccessDeniedError, ServerOverloadError, UndefinedError, UnsupportedCountryError
 from chatgpt.consts import *
+
+UUID_REGEX = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+CONVERSATION_REGEX = re.compile(r'https://chat\.openai\.com/backend-api/conversation/' + UUID_REGEX)
+CONVERSATIONS_REGEX = re.compile(r'https://chat\.openai\.com/backend-api/conversations\?offset=[0-9]+&limit=[0-9]+')
 class ChatRecorder(object):
     def __init__(self) -> None:
-        self.conversations = None
-        self.history = None
+        pass
 
     async def response_recorder(self, response):
-        if response.url.startswith("https://chat.openai.com/backend-api/conversation/"):
-            response_obj = json.loads(await response.text())
-            # print(response_obj)
-            self.history = response_obj
-        elif response.url.startswith("https://chat.openai.com/backend-api/conversations"):
-            response_obj = json.loads(await response.text())
-            # print(response_obj)
-            self.conversations = response_obj
+        pass
 
 class ChatSession(object):
     def __init__(self, account: str, password: str, headless: bool=False) -> None:
@@ -69,7 +65,6 @@ class ChatSession(object):
         await self.page.goto("https://chat.openai.com/auth/login")
         await self.page.wait_for_load_state("domcontentloaded")
 
-        
         try:
             await self.page.wait_for_selector(selector="xpath=//button[text()='Log in']")
         except TimeoutError as e:
@@ -111,7 +106,7 @@ class ChatSession(object):
         await self.page.locator(selector=xpath).click()
     
     async def check_ui(self, xpath: str):
-        return await self.page.locator(selector=f"xpath=//div[text()='{xpath}']").count() > 0
+        return await self.page.locator(selector=xpath).count() > 0
 
     async def new_chat(self):
         await self.click_ui("xpath=//a[text()='New chat']")
@@ -123,29 +118,22 @@ class ChatSession(object):
             await self.click_ui(f'xpath=//nav/div[1]/div/a[{index}]')
     
     async def get_conversations(self):
-        await self.new_chat()
-        while True:
-            if self.recorder.conversations is not None:
-                break
-            await asyncio.sleep(0.1)
-        conversations = self.recorder.conversations
-        self.recorder.conversations = None
-
+        async with self.page.expect_response(lambda response: re.fullmatch(CONVERSATIONS_REGEX, response.url) and response.status == 200) as response_info:
+            await self.new_chat()
+        response = await response_info.value
+        conversations = json.loads(await response.text())
         ret = []
         for item in conversations["items"]:
             ret.append(Conversation(self, item["id"], item["title"], item["create_time"]))
         return ret
     
     async def get_conversation(self, conversation_index: Optional[Union[str, int]]=None):
-        if conversation_index is not None:
+        async with self.page.expect_response(lambda response: re.fullmatch(CONVERSATION_REGEX, response.url) and response.status == 200) as response_info:
+            await self.new_chat()
             await self.select_conversation(conversation_index)
-        while True:
-            if self.recorder.history is not None:
-                break
-            await asyncio.sleep(0.1)
-        history = self.recorder.history
-        self.recorder.history = None
-        return history
+        response = await response_info.value
+        history = json.loads(await response.text())
+        return History.from_dict(history)
     
     async def delete_conversation(self, conversation_index: Optional[Union[str, int]]=None):
         if conversation_index is not None:
@@ -161,9 +149,9 @@ class ChatSession(object):
                 break
             await asyncio.sleep(1)
         
-    async def submit_question(self, text: str, conversation_index: Optional[str]=None):
+    async def submit_question(self, text: str, conversation_index: Optional[str]=None, delay:int=50):
         if conversation_index is not None:
             await self.select_conversation(conversation_index)
         await self.page.wait_for_selector(selector="xpath=//textarea")
-        await self.page.locator(selector="xpath=//textarea").type(text, delay=100)
+        await self.page.locator(selector="xpath=//textarea").type(text, delay=delay)
         await self.page.locator(selector="xpath=//textarea").press("Enter")
